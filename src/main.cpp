@@ -20,11 +20,18 @@ allowing the TouchDRO to receive the data as if it were directly connected to a 
 volatile uint32_t receivedData = 0; // safe variable to share outside of the ISR. holds the most recently received 21-bit data frame.
 volatile bool dataReady = false; // Flag to indicate that a complete data frame has been received and is ready to be read outside of the ISR.
 
+// Volatile variables for debug printing
+volatile uint32_t frameGapTime = 0;
+volatile bool outOfSyncDetected = false;
+volatile bool dataNotConsumed = false;
+
+
 // Interrupt service routine for the inputclock signal
 void onInputClock()
 {
 
   // Set up static variables for this ISR
+  static uint32_t dataBuffer = 0; // This is a buffer for the data being received in the current frame. 
   static uint32_t currentTime = 0;
   static uint32_t lastClockTime = 0;
   static uint32_t clockInterval = 0;
@@ -42,7 +49,9 @@ void onInputClock()
   if (dataReady)
   {
     return; // Ignore additional clock pulses if data is already ready and not read yet.
+    dataNotConsumed = true; // Set a flag to indicate that new data has arrived before the previous data was consumed. This is for debug purposes to detect if we are losing frames because the main loop isn't keeping up.
   }
+
 
   // Calculate the interval since the last clock pulse
   clockInterval = currentTime - lastClockTime;
@@ -53,7 +62,13 @@ void onInputClock()
     if (clockInterval < MIN_FRAME_SPACING)
     {
       return; // Not a valid first clock pulse, ignore and wait for the next one
-    };
+    }
+    else{
+      // This is the first clock pulse of a new frame, reset the data buffer and bit count to start receiving the new frame
+      frameGapTime = clockInterval; // Store the time between frames for debug printing
+      outOfSyncDetected = false; // Clear the out of sync flag since we have seen a valid start of frame pulse
+
+    }
   }
   else 
   {
@@ -62,6 +77,7 @@ void onInputClock()
       // Bit clock interval too long, this frame is out of sync, reset state to wait for the next start of frame
       bitCount = 0;
       receivedData = 0;
+      outOfSyncDetected = true;
       return;
     }
   }
@@ -73,9 +89,9 @@ void onInputClock()
   // Shift in the bit
   if (bit)
   {
-    receivedData |= ((long)0x00100000); // Set the 21st bit if the bit is 1
+    dataBuffer |= ((long)0x00100000); // Set the 21st bit if the bit is 1
   }
-  receivedData >>= 1;
+  dataBuffer >>= 1;
 
   // Increment bit count
   bitCount++;
@@ -83,7 +99,9 @@ void onInputClock()
   // Check if we have received all 21 bits
   if (bitCount >= 21)
   {
+    receivedData = dataBuffer; // Store the received data in the volatile variable for use outside the ISR
     dataReady = true;
+    dataBuffer = 0; // Clear the data buffer for the next frame
     bitCount = 0;    // Reset bit count for the next data frame
   }
 }
@@ -107,21 +125,35 @@ void setup()
 
 void loop()
 {
+  // Check if out of sync was detected
+  if (outOfSyncDetected)
+  {
+    Serial.println("Out of sync detected. Waiting for next valid frame...");
+    outOfSyncDetected = false; // Clear the flag after reporting
+  } 
+
+  if(dataNotConsumed)
+  {
+    Serial.println("Warning: Previous data was not consumed.");
+    dataNotConsumed = false; // Clear the flag after reporting
+  }
   // Check if data is ready
   if (dataReady)
   {
 
     uint32_t bufferedData = 0;
+    uint32_t bufferedFrameGapTime = 0;
     // Disable interrupts temporarily to safely read volatile variables
     noInterrupts();
     bufferedData = receivedData;
+    bufferedFrameGapTime = frameGapTime;
     dataReady = false;
-    receivedData = 0;
     interrupts();
 
     // Output the value
     // Serial.println(millis());
     // Serial.print("Received 21-bit value: ");
+    Serial.println(bufferedFrameGapTime); // Print the time between frames for debug purposes
     Serial.println(bufferedData, BIN); // Print in binary
                                        // Serial.print("Clock Interval: ");
     //  for (int i = 0; i < 21; i++){
