@@ -14,44 +14,44 @@ allowing the TouchDRO to receive the data as if it were directly connected to a 
 #define OUTPUT_DATA_PIN 4  // D4 This is the output for the data signal that will be sent to the TouchDRO adaptor.
 
 #define MAX_BITS 21
-#define MIN_FRAME_SPACING 3000 // Much larger than bit spacing but smaller than expected frame spacing, in microseconds.
+#define MIN_INPUT_FRAME_SPACING 3000  // Much larger than bit spacing but smaller than expected frame spacing, in microseconds.
+#define MIN_OUTPUT_FRAME_SPACING 3000 // Much larger than bit spacing but smaller than expected frame spacing, in microseconds.
 
 // Volatile variables for interrupt handling
 volatile uint32_t receivedData = 0; // safe variable to share outside of the ISR. holds the most recently received 21-bit data frame.
-volatile bool dataReady = false; // Flag to indicate that a complete data frame has been received and is ready to be read outside of the ISR.
+volatile bool dataReady = false;    // Flag to indicate that a complete data frame has been received and is ready to be read outside of the ISR.
 
 // Volatile variables for debug printing
 volatile uint32_t frameGapTime = 0;
 volatile bool outOfSyncDetected = false;
 volatile bool dataNotConsumed = false;
 
+// ISR for the clock signal from the scale.
 
-// Interrupt service routine for the inputclock signal
 void onInputClock()
 {
 
   // Set up static variables for this ISR
-  static uint32_t dataBuffer = 0; // This is a buffer for the data being received in the current frame. 
+  static uint32_t dataBuffer = 0; // This is a buffer for the data being received in the current frame.
   static uint32_t currentTime = 0;
   static uint32_t lastClockTime = 0;
   static uint32_t clockInterval = 0;
   static int bitCount = 0;
-  
+
   // Get the current time in microseconds
   if (lastClockTime == 0)
   {
     lastClockTime = micros(); // This is the first pulse seen so prime the pulse timer and return to avoid triggering a frame on the first pulse seen.
-    return;                   
+    return;
   }
 
   currentTime = micros();
 
   if (dataReady)
   {
-    return; // Ignore additional clock pulses if data is already ready and not read yet.
+    return;                 // Ignore additional clock pulses if data is already ready and not read yet.
     dataNotConsumed = true; // Set a flag to indicate that new data has arrived before the previous data was consumed. This is for debug purposes to detect if we are losing frames because the main loop isn't keeping up.
   }
-
 
   // Calculate the interval since the last clock pulse
   clockInterval = currentTime - lastClockTime;
@@ -59,20 +59,20 @@ void onInputClock()
 
   if (bitCount == 0) // Check for the first clock pulse when we are expecting the start of a new data frame
   {
-    if (clockInterval < MIN_FRAME_SPACING)
+    if (clockInterval < MIN_INPUT_FRAME_SPACING)
     {
       return; // Not a valid first clock pulse, ignore and wait for the next one
     }
-    else{
+    else
+    {
       // This is the first clock pulse of a new frame, reset the data buffer and bit count to start receiving the new frame
       frameGapTime = clockInterval; // Store the time between frames for debug printing
-      outOfSyncDetected = false; // Clear the out of sync flag since we have seen a valid start of frame pulse
-
+      outOfSyncDetected = false;    // Clear the out of sync flag since we have seen a valid start of frame pulse
     }
   }
-  else 
+  else
   {
-    if (clockInterval > MIN_FRAME_SPACING) // Test to make sure this is a data bit.
+    if (clockInterval > MIN_INPUT_FRAME_SPACING) // Test to make sure this is a data bit.
     {
       // Bit clock interval too long, this frame is out of sync, reset state to wait for the next start of frame
       bitCount = 0;
@@ -102,7 +102,65 @@ void onInputClock()
     receivedData = dataBuffer; // Store the received data in the volatile variable for use outside the ISR
     dataReady = true;
     dataBuffer = 0; // Clear the data buffer for the next frame
-    bitCount = 0;    // Reset bit count for the next data frame
+    bitCount = 0;   // Reset bit count for the next data frame
+  }
+}
+
+// ISR for the clock signal output from the TouchDRO adaptor
+void onOutputClock()
+{
+  // This function will be called on the falling edge of the output clock signal from the TouchDRO adaptor.
+  // It should output the bits of the most recently received data frame to the OUTPUT_DATA_PIN in sync with the output clock.
+
+  // Static variables to keep track of which bit we are on and the data to send
+  static uint32_t dataToSend = 0;
+  static uint32_t currentTime = 0;
+  static uint32_t lastClockTime = 0;
+  static uint32_t clockInterval = 0;
+  static int bitIndex = 0;
+
+  if (lastClockTime == 0)
+  {
+    lastClockTime = micros(); // This is the first pulse seen so prime the pulse timer and return to avoid triggering a frame on the first pulse seen.
+    return;
+  }
+
+  if (!dataReady)
+  {
+    return; // No data to send, ignore the clock pulse
+  }
+
+  // Calculate the interval since the last clock pulse
+  clockInterval = currentTime - lastClockTime;
+  lastClockTime = currentTime; // Update last clock time
+
+  if (bitIndex == 0) // Check for the first clock pulse when we are expecting the start of a new data frame
+  {
+    if (clockInterval < MIN_INPUT_FRAME_SPACING)
+    {
+      return; // Not a valid first clock pulse, ignore and wait for the next one
+    }
+    else
+    {
+      dataToSend = receivedData; // We have a start of frame so load the next data frame to send
+      dataReady = false;         // It is ok to load the next input frame now that we have copied the current frame.
+    }
+  }
+
+  // If we got this far we are in an output frame
+  // Output the current bit
+  int bit = (dataToSend & 0x01);      // Get the current bit to send (starting from the least significant bit)
+  digitalWrite(OUTPUT_DATA_PIN, bit); // Write the bit to the output data pin
+
+  bitIndex++;
+  dataToSend >>= 1; // Shift the data to get the next bit ready for the next clock pulse
+
+  if (bitIndex >= MAX_BITS)
+  {
+    // All bits have been sent, reset state
+    dataReady = false;         // Clear the data ready flag until new data is received
+    bitIndex = 0;              // Reset bit index for the next frame
+    dataToSend = receivedData; // Load the next data frame to send
   }
 }
 
@@ -119,6 +177,7 @@ void setup()
 
   // Attach interrupt to clock pin (falling edge)
   attachInterrupt(digitalPinToInterrupt(INPUT_CLOCK_PIN), onInputClock, FALLING);
+  attachInterrupt(digitalPinToInterrupt(OUTPUT_CLOCK_PIN), onOutputClock, RISING);
 
   Serial.println("DRO Adaptor initialized. Waiting for data...");
 }
@@ -130,9 +189,9 @@ void loop()
   {
     Serial.println("Out of sync detected. Waiting for next valid frame...");
     outOfSyncDetected = false; // Clear the flag after reporting
-  } 
+  }
 
-  if(dataNotConsumed)
+  if (dataNotConsumed)
   {
     Serial.println("Warning: Previous data was not consumed.");
     dataNotConsumed = false; // Clear the flag after reporting
@@ -154,14 +213,13 @@ void loop()
     // Serial.println(millis());
     // Serial.print("Received 21-bit value: ");
     Serial.println(bufferedFrameGapTime); // Print the time between frames for debug purposes
-    Serial.println(bufferedData, BIN); // Print in binary
-                                       // Serial.print("Clock Interval: ");
+    Serial.println(bufferedData, BIN);    // Print in binary
+                                          // Serial.print("Clock Interval: ");
     //  for (int i = 0; i < 21; i++){
     //       Serial.print(cachedFrameTimes[i]);
     //       Serial.print(" ");
     //     }
     // Serial.println("");
-
   }
 
   // Small delay to prevent busy looping
