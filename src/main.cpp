@@ -14,7 +14,8 @@ allowing the TouchDRO to receive the data as if it were directly connected to a 
 #define OUTPUT_DATA_PIN 4   // D4 This is the output for the data signal that will be sent to the TouchDRO adaptor.
 
 #define MAX_BITS 21
-#define MAX_CLOCK_INTERVAL 150  // Maximum expected interval between bit time clock pulses in microseconds
+#define MIN_FRAME_SPACING 3000 // Much larger than bit spacing but smaller than expected frame spacing, in microseconds.
+
 
 
 // Volatile variables for interrupt handling
@@ -23,33 +24,56 @@ volatile int bitCount = 0;
 volatile bool dataReady = false;
 volatile bool firstClockFound = false;  // first clock pulse correctly detected
 
+volatile uint32_t currentTime = 0;
 volatile uint32_t lastClockTime = 0;  
 volatile uint32_t clockInterval = 0;
+volatile uint32_t frameInterval = 0;
+volatile uint32_t frameTimes[21];
+uint32_t cachedFrameTimes[21];
 
 // Interrupt service routine for the inputclock signal
 void onInputClock() {
 
   // Get the current time in microseconds
-  uint32_t currentTime = micros();
-  // Calculate the interval between clock pulses
-  clockInterval = currentTime - lastClockTime;  
-  lastClockTime = currentTime;  // Update last clock time
+  currentTime = micros();
   
-  if (bitCount == 0) { // Only check for the first clock pulse when we are expecting the start of a new data frame
-    firstClockFound = clockInterval > MAX_CLOCK_INTERVAL;  // Check if the interval indicates the first clock pulse of a new data frame
+  if (dataReady) {
+    return;  // Ignore additional clock pulses if data is already ready
   }
   
-  if (!firstClockFound) {
-    // 
-    return;
+  // Calculate the interval since the last clock pulse
+    clockInterval = currentTime - lastClockTime;  
+    lastClockTime = currentTime;  // Update last clock time
+
+  if (bitCount == 0) { // Only check for the first clock pulse when we are expecting the start of a new data frame
+    if(clockInterval > MIN_FRAME_SPACING){
+      firstClockFound = true;  // First clock pulse of a new data frame detected
+      frameInterval = clockInterval; 
+    }
+    else {
+      return;  // Not a valid first clock pulse, ignore and wait for the next one   
+    }; 
+  }
+  else{
+    if(clockInterval > MIN_FRAME_SPACING){
+      // Bit clock interval too long, this frame is out of sync, reset state and wait for the next valid first clock pulse
+      firstClockFound = false;  
+      bitCount = 0;
+      receivedData = 0;  // Reset received data to start a new data frame
+      return;  // Ignore this clock pulse and wait for the next one
+    }
   }
 
   // Read the data bit
   int bit = digitalRead(INPUT_DATA_PIN);
+  frameTimes[bitCount] = clockInterval;
   
-  // Shift in the bit (the scale does not send the bits MSB first, but we are not interpreting the data as a number, just re-emitting it, so we can shift in the bits as they come)
-  receivedData = (receivedData << 1) | bit;
-  
+  // Shift in the bit 
+  if(bit) {
+    receivedData |= ((long)0x00100000);  // Set the 21st bit if the bit is 1
+  }
+  receivedData >>= 1;
+    
   // Increment bit count
   bitCount++;
   
@@ -64,12 +88,14 @@ void onInputClock() {
 
 void setup() {
   // Initialize serial for output
-  Serial.begin(9600);
-  
+  Serial.begin(115200);
+  while (!Serial);
+  Serial.println("DRO Adaptor starting.");
   // Set pin modes
   pinMode(INPUT_CLOCK_PIN, INPUT);
   pinMode(INPUT_DATA_PIN, INPUT);
   
+  currentTime = micros(); // Prime the frame timer to avoid triggering on the first clock pulse seen.
   // Attach interrupt to clock pin (falling edge)
   attachInterrupt(digitalPinToInterrupt(INPUT_CLOCK_PIN), onInputClock, FALLING);
   
@@ -82,20 +108,29 @@ void loop() {
     // Disable interrupts temporarily to safely read volatile variables
     noInterrupts();
     uint32_t data = receivedData;
-    int count = bitCount;
     dataReady = false;
-    bitCount = 0;
     receivedData = 0;
+    for (int i = 0; i < 21; i++) {
+      cachedFrameTimes[i] = frameTimes[i];
+    }
     interrupts();
+  
     
-    // Process the received data (mask to 21 bits)
-    uint32_t value = data & 0x1FFFFF;  // 21 bits mask
+    // adda a leading 1 to print the same number of bits
+    //uint32_t value = data | 0x200000;  // 21 bits mask
     
     // Output the value
+    //Serial.println(millis());
     Serial.print("Received 21-bit value: ");
-    Serial.println(value, BIN);  // Print in binary
-    Serial.print("Decimal: ");
-    Serial.println(value);
+    Serial.println(data, BIN);  // Print in binary
+    Serial.print("Clock Interval: ");
+ for (int i = 0; i < 21; i++){
+      Serial.print(cachedFrameTimes[i]);
+      Serial.print(" ");
+    } 
+    Serial.println(""); 
+   
+    
   }
   
   // Small delay to prevent busy looping
