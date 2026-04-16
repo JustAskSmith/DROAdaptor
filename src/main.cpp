@@ -22,7 +22,7 @@ allowing the TouchDRO to receive the data as if it were directly connected to a 
 volatile uint32_t receivedData = 0;
 volatile int bitCount = 0;
 volatile bool dataReady = false;
-volatile bool firstClockFound = false;  // first clock pulse correctly detected
+volatile bool inFrame = false;  // set when first clock pulse of a data frame is detected
 
 volatile uint32_t currentTime = 0;
 volatile uint32_t lastClockTime = 0;  
@@ -35,10 +35,15 @@ uint32_t cachedFrameTimes[21];
 void onInputClock() {
 
   // Get the current time in microseconds
+  if (currentTime == 0) {
+    currentTime = micros(); // Prime the timer on the first clock pulse to avoid triggering a frame on the first pulse seen.
+    return;  // Ignore the first clock pulse as it is used to prime the timer and establish a reference point for timing intervals.
+  }
+  
   currentTime = micros();
   
   if (dataReady) {
-    return;  // Ignore additional clock pulses if data is already ready
+    return;  // Ignore additional clock pulses if data is already ready and not read yet.
   }
   
   // Calculate the interval since the last clock pulse
@@ -47,7 +52,7 @@ void onInputClock() {
 
   if (bitCount == 0) { // Only check for the first clock pulse when we are expecting the start of a new data frame
     if(clockInterval > MIN_FRAME_SPACING){
-      firstClockFound = true;  // First clock pulse of a new data frame detected
+      inFrame = true;  // First clock pulse of a new data frame detected
       frameInterval = clockInterval; 
     }
     else {
@@ -56,12 +61,10 @@ void onInputClock() {
   }
   else{
     if(clockInterval > MIN_FRAME_SPACING){
-      // Bit clock interval too long, this frame is out of sync, reset state and wait for the next valid first clock pulse
-      firstClockFound = false;  
+      // Bit clock interval too long, this frame was out of sync, reset bit count and restart the frame
       bitCount = 0;
       receivedData = 0;  // Reset received data to start a new data frame
-      return;  // Ignore this clock pulse and wait for the next one
-    }
+     }
   }
 
   // Read the data bit
@@ -80,7 +83,7 @@ void onInputClock() {
   // Check if we have received all 21 bits
   if (bitCount >= 21) {
     dataReady = true;
-    firstClockFound = false;  // Reset for the next data frame
+    inFrame = false;  // Reset for the next data frame
     bitCount = 0;  // Reset bit count for the next data frame
   }
   }
@@ -95,7 +98,6 @@ void setup() {
   pinMode(INPUT_CLOCK_PIN, INPUT);
   pinMode(INPUT_DATA_PIN, INPUT);
   
-  currentTime = micros(); // Prime the frame timer to avoid triggering on the first clock pulse seen.
   // Attach interrupt to clock pin (falling edge)
   attachInterrupt(digitalPinToInterrupt(INPUT_CLOCK_PIN), onInputClock, FALLING);
   
@@ -105,34 +107,35 @@ void setup() {
 void loop() {
   // Check if data is ready
   if (dataReady) {
+   
+    uint32_t bufferedData = 0;
     // Disable interrupts temporarily to safely read volatile variables
     noInterrupts();
-    uint32_t data = receivedData;
+    bufferedData = receivedData;
     dataReady = false;
     receivedData = 0;
-    for (int i = 0; i < 21; i++) {
-      cachedFrameTimes[i] = frameTimes[i];
-    }
+    // for (int i = 0; i < 21; i++) {
+    //   cachedFrameTimes[i] = frameTimes[i];
+    // }
+    cachedFrameTimes[0] = frameTimes[0];
     interrupts();
   
     
-    // adda a leading 1 to print the same number of bits
-    //uint32_t value = data | 0x200000;  // 21 bits mask
     
     // Output the value
     //Serial.println(millis());
-    Serial.print("Received 21-bit value: ");
-    Serial.println(data, BIN);  // Print in binary
-    Serial.print("Clock Interval: ");
- for (int i = 0; i < 21; i++){
-      Serial.print(cachedFrameTimes[i]);
-      Serial.print(" ");
-    } 
-    Serial.println(""); 
-   
+    //Serial.print("Received 21-bit value: ");
+    Serial.println(bufferedData, BIN);  // Print in binary
+    //Serial.print("Clock Interval: ");
+//  for (int i = 0; i < 21; i++){
+//       Serial.print(cachedFrameTimes[i]);
+//       Serial.print(" ");
+//     } 
+    // Serial.println(""); 
+   Serial.println(cachedFrameTimes[0]);
     
   }
   
   // Small delay to prevent busy looping
-  delay(10);
+  //delay(10);
 }
