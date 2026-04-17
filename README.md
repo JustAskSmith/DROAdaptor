@@ -7,7 +7,8 @@ and translate the scale output to an externally clocked 21 bit 2's complement da
 The adaptor also inverts the data bit as the quill scale emit ones as +VSS where the standard
 longer scales on my table emit ones as ground.
 
-The XIAO and the quill scale is easily powered from the 3v3 output of the Touch DRO adaptor.
+The XIAO and the quill scale is easily powered from the 3v3 output of the Touch DRO adaptor. You can remove the battery
+in the quill scale.
 
 ```
 Scale         XIAO       Touch DRO  
