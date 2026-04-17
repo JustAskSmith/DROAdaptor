@@ -9,7 +9,8 @@ longer scales on my table emit ones as ground.
 
 The XIAO and the quill scale is easily powered from the 3v3 output of the Touch DRO adaptor.
 
-```Scale         XIAO       Touch DRO  
+```
+Scale         XIAO       Touch DRO  
 VSS ------    3v3    ----- VSS  
 D-  ------  D1    D3 ----- D-   
 D+  ------  D2    D4 ----- D+  
