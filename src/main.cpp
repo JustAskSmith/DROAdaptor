@@ -80,7 +80,7 @@ void onInputClock()
     {
       // Bit clock interval too long, this frame is out of sync, reset state to wait for the next start of frame
       bitCount = 0;
-      receivedData = 0;
+      dataBuffer= 0;
       inputOutOfSyncDetected = true;
       return;
     }
@@ -141,44 +141,43 @@ void onOutputClock()
 
   if (bitIndex == 0) // Check for the first clock pulse when we are expecting the start of a new data frame
   {
-    if (clockInterval < MIN_INPUT_FRAME_SPACING)
+    if (clockInterval < MIN_OUTPUT_FRAME_SPACING)
     {
       return; // Not a valid first clock pulse, ignore and wait for the next one
     }
     else
     {
       ouputFrameDetected = true; // Set a flag to indicate that we have detected the first frame. This is for debug purposes.
-      if(dataReady){
-        // We have a new input frame so copy it and clear the data ready flag. Otherwise we will just use the last frame we already copied.
-        dataToSend = receivedData; // We have a start of frame so load the next data frame to send
-        dataReady = false;         // It is ok to load the next input frame now that we have copied the current frame.
-      }
+      dataToSend = receivedData; // We have a start of frame so load the next data frame to send
+  
+      dataReady = false;         // It is ok to load the next input frame now that we have copied the current frame.
+
     }
   }
-  else
-  {
-    if (clockInterval > MIN_INPUT_FRAME_SPACING) // Test to make sure this is a data bit.
-    {
-      // Bit clock interval too long, this frame is out of sync, reset state to wait for the next start of frame
-      bitIndex = 0;
-      outputOutOfSyncDetected = true;
-      return;
-    }
-  }
+  // else
+  // {
+  //   if (clockInterval > MIN_INPUT_FRAME_SPACING) // Test to make sure this is a data bit.
+  //   {
+  //     // Bit clock interval too long, this frame is out of sync, reset state to wait for the next start of frame
+  //     bitIndex = 0;
+  //     outputOutOfSyncDetected = true;
+  //     return;
+  //   }
+  // }
   // If we got this far we are in an output frame
   // Output the current bit
-  int bit = (dataToSend & 0x01);      // Get the current bit to send (starting from the least significant bit)
-  digitalWrite(OUTPUT_DATA_PIN, bit); // Write the bit to the output data pin
+  int bit = (dataToSend & ((uint32_t)0x00000001));      // Get the current bit to send (starting from the least significant bit)
+  digitalWrite(OUTPUT_DATA_PIN, !bit); // Write the bit to the output data pin
 
   bitIndex++;
-  dataToSend >>= 1; // Shift the data to get the next bit ready for the next clock pulse
+  dataToSend >>= 1; // Shift the data to get the next bit readyfor the next clock pulse
 
   if (bitIndex >= MAX_BITS)
   {
     // All bits have been sent, reset state
     dataReady = false;         // Clear the data ready flag until new data is received
-    bitIndex = 0;              // Reset bit index for the next frame
-    dataToSend = receivedData; // Load the next data frame to send
+    bitIndex = 0;             // Reset bit index for the next frame
+    dataToSend = 0; // Load the next data frame to send
   }
 }
 
@@ -186,8 +185,8 @@ void setup()
 {
   // Initialize serial for output
   Serial.begin(115200);
-  while (!Serial)
-    ;
+  //while (!Serial); // Wait for serial to be ready
+
   Serial.println("DRO Adaptor starting.");
   // Set pin modes
   pinMode(INPUT_CLOCK_PIN, INPUT);
@@ -204,64 +203,6 @@ void setup()
 
 void loop()
 {
-
-  static uint32_t lastData = 0; 
-  uint32_t bufferedData = 0;
-  uint32_t bufferedFrameGapTime = 0;
-
-  if (dataReady)
-  {
-    // Disable interrupts temporarily to safely read volatile variables
-    noInterrupts();
-    bufferedData = receivedData;
-    bufferedFrameGapTime = frameGapTime;
-    dataReady = false;
-    interrupts();
-
-    if ((bufferedData != lastData))
-    {
-      long temp = bufferedData;
-      if(temp & 0x00100000){
-        temp |= 0xFFE00000; // Sign extend the 21-bit value to 32 bits if the sign bit is set
-      }
-      Serial.println(temp); // Print in decimal
-      lastData = bufferedData;
-   
-    }
-   
- 
-  }
-
-  // Check if out of sync was detected
-  if (inputOutOfSyncDetected)
-  {
-    Serial.println("Input out of sync detected. Waiting for next valid frame...");
-    inputOutOfSyncDetected = false; // Clear the flag after reporting
-  }
-
-  if(outputOutOfSyncDetected)
-  {
-    Serial.println("Output out of sync detected. Waiting for next valid frame...");
-    outputOutOfSyncDetected = false; // Clear the flag after reporting
-  } 
-
-  if (dataNotConsumed)
-  {
-    Serial.println("Warning: Previous data was not consumed.");
-    dataNotConsumed = false; // Clear the flag after reporting
-  }
-  if (powerOnDetected)
-  {
-    Serial.println("Power on detected.");
-    powerOnDetected = false; // Clear the flag after reporting
-  }
-
-  if (ouputFrameDetected)
-  {
-    Serial.println("Output frame detected.");
-    ouputFrameDetected = false; // Clear the flag after reporting
-  }
-
   // Small delay to prevent busy looping
-  // delay(10);
+  delay(1);
 }
