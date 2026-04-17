@@ -21,15 +21,6 @@ This allows the TouchDRO to receive the data as if it were directly connected to
 volatile uint32_t receivedData = 0; // safe variable to share outside of the ISR. holds the most recently received 21-bit data frame.
 volatile bool dataReady = false;    // Flag to indicate that a complete data frame has been received and is ready to be read outside of the ISR.
 
-// Volatile variables for debug printing
-volatile uint32_t frameGapTime = 0;
-volatile bool inputOutOfSyncDetected = false;
-volatile bool outputOutOfSyncDetected = false;
-volatile bool dataNotConsumed = false;
-volatile bool powerOnDetected = false;
-volatile bool ouputFrameDetected = false;
-
-
 // ISR for the clock signal from the scale.
 
 void onInputClock()
@@ -54,7 +45,6 @@ void onInputClock()
   if (dataReady)
   {
     return;                 // Ignore additional clock pulses if data is already ready and not read yet.
-    dataNotConsumed = true; // Set a flag to indicate that new data has arrived before the previous data was consumed. This is for debug purposes to detect if we are losing frames because the main loop isn't keeping up.
   }
 
   // Calculate the interval since the last clock pulse
@@ -70,8 +60,7 @@ void onInputClock()
     else
     {
       // This is the first clock pulse of a new frame, reset the data buffer and bit count to start receiving the new frame
-      frameGapTime = clockInterval; // Store the time between frames for debug printing
-      inputOutOfSyncDetected = false;    // Clear the out of sync flag since we have seen a valid start of frame pulse
+  
     }
   }
   else
@@ -81,7 +70,6 @@ void onInputClock()
       // Bit clock interval too long, this frame is out of sync, reset state to wait for the next start of frame
       bitCount = 0;
       dataBuffer= 0;
-      inputOutOfSyncDetected = true;
       return;
     }
   }
@@ -130,7 +118,6 @@ void onOutputClock()
   if (lastClockTime == 0)
   {
     lastClockTime = micros(); // This is the call from the TouchDRO powering up its pullup resistors so just prime the pulse timer.
-    powerOnDetected = true;     // Set a flag to indicate that we have detected power on from the TouchDRO. This is for debug purposes.
     return;
   }
 
@@ -147,11 +134,8 @@ void onOutputClock()
     }
     else
     {
-      ouputFrameDetected = true; // Set a flag to indicate that we have detected the first frame. This is for debug purposes.
       dataToSend = receivedData; // We have a start of frame so load the next data frame to send
-  
       dataReady = false;         // It is ok to load the next input frame now that we have copied the current frame.
-
     }
   }
   // else
